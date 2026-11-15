@@ -54,15 +54,16 @@ Only port 3000 is published; the backend is reachable from the frontend containe
 2. **Check Groww and Yahoo from Azure.** I tested the containers locally, not from Azure. Groww may restrict API calls by
    source IP, and Yahoo may rate-limit cloud IPs. Container Apps outbound IPs are shared unless you add a VNet + NAT
    gateway with a static IP. Check `https://<frontend>/api/groww/status` after deploying.
-3. **Cost: about US$10 per month with the default settings** (Central India retail rates, light traffic):
-   the frontend runs 1 replica (0.25 vCPU / 0.5 GiB, about $4 at the idle rate), the backend scales to zero when idle
-   (the first request after a quiet period has a short cold start), and Container Registry Basic is about $5.
-   Key Vault, Log Analytics (first 5 GB/month free), the managed identity, the load-balanced ingress and the first
-   100 GB of egress are effectively free here. The backend peaks around 75 MiB, so the small size is safe.
-   To change it, edit the defaults at the top of `deploy/main.bicep` (or pass `-p name=value`):
-   - `frontendMinReplicas = 0` → about $5–6/month (the page itself then has a cold start too)
-   - `frontendMinReplicas = 2` and `backendMinReplicas = 1` (always warm, more redundancy) → about $20/month at this size
-   - `containerCpu = '0.5'`, `containerMemory = '1Gi'` → doubles the compute part
+3. **Cost: about US$5 per month with the default settings** (Central India retail rates). Both apps scale to zero
+   when idle and run at the smallest size (0.25 vCPU / 0.5 GiB), so compute stays inside the monthly Container Apps free
+   grant (180,000 vCPU-seconds, 360,000 GiB-seconds and 2 million requests), which is plenty for personal use. The one
+   fixed cost is Container Registry Basic at about $5 a month; Azure has no free registry tier. Key Vault (cents),
+   Log Analytics (a 0.1 GB/day cap keeps it inside the free 5 GB/month), the managed identity, the load-balanced
+   ingress and the first 100 GB of egress cost nothing here. Replicas are capped at 2 per app so unexpected traffic
+   cannot run up a bill. The trade-off is a cold start on the first request after a quiet period (a few seconds for the
+   page, then a few more for the backend). To get to about $0, keep the images in a free registry such as GitHub
+   Container Registry instead of ACR (the images hold no secrets, but a free registry needs public images or a pull
+   token). To keep things warm instead, set `frontendMinReplicas = 1` in `deploy/main.bicep` (about $4 more per month).
 
    No premium compute or networking is used (Consumption plan, ACR Basic, Key Vault Standard, no VNet, NAT
    gateway, private endpoint, Front Door or Application Gateway). Don't enable private endpoints or planned
@@ -99,13 +100,13 @@ Two things Azure keeps for a while after a group is deleted:
    able to redeploy with the same name, which is derived from the resource group):
    `az keyvault purge --name <key-vault-name> --location centralindia`
    (list soft-deleted vaults with `az keyvault list-deleted`).
-2. **The Log Analytics workspace is soft-deleted for 14 days** and blocks reusing its name. Delete it permanently first if
-   you plan to redeploy soon:
-   `az monitor log-analytics workspace delete -g rg-stockmarket -n <workspace-name> --force true --yes`
+2. **The Log Analytics workspace is soft-deleted for 14 days.** Nothing to do if you redeploy with the same names
+   (`deploy.sh` does): Azure simply recovers it, with its old data. To erase it for good instead:
+   `az monitor log-analytics workspace delete -g rg-stockmarket -n <workspace-name> --force --yes`
 
 To keep the app but cut the bill instead, shrink the live apps without redeploying:
 
 ```bash
-az containerapp update -g rg-stockmarket -n ca-frontend --min-replicas 1 --cpu 0.25 --memory 0.5Gi
-az containerapp update -g rg-stockmarket -n ca-backend  --min-replicas 0 --cpu 0.25 --memory 0.5Gi
+az containerapp update -g rg-stockmarket -n ca-frontend --min-replicas 0 --max-replicas 2 --cpu 0.25 --memory 0.5Gi
+az containerapp update -g rg-stockmarket -n ca-backend  --min-replicas 0 --max-replicas 2 --cpu 0.25 --memory 0.5Gi
 ```

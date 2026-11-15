@@ -24,13 +24,13 @@ param deployApps bool = false
 @description('Image tag to deploy')
 param imageTag string = 'latest'
 
-@description('Frontend replica range (the Container Apps ingress load-balances across replicas)')
-param frontendMinReplicas int = 1
-param frontendMaxReplicas int = 5
+@description('Frontend replica range. Min 0 = scale to zero when idle (free). Max is capped low so unexpected traffic cannot run up a bill.')
+param frontendMinReplicas int = 0
+param frontendMaxReplicas int = 2
 
 @description('Backend replica range (0 = scale to zero when idle; the first request after idle has a short cold start)')
 param backendMinReplicas int = 0
-param backendMaxReplicas int = 3
+param backendMaxReplicas int = 2
 
 @description('CPU and memory per replica (the analysis peaks around 75 MiB, so 0.25 vCPU / 0.5 GiB is plenty)')
 param containerCpu string = '0.25'
@@ -51,6 +51,7 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   properties: {
     sku: { name: 'PerGB2018' }
     retentionInDays: 30
+    workspaceCapping: { dailyQuotaGb: json('0.1') } // ~3 GB/month max, inside the free 5 GB allowance
   }
 }
 

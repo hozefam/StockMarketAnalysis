@@ -18,6 +18,18 @@ echo "Subscription: $(az account show --query name -o tsv)"
 echo "Resource group: $RG ($LOCATION)   image tag: $TAG"
 read -r -p "Continue? [y/N] " ok; [[ "$ok" =~ ^[Yy]$ ]] || exit 0
 
+# A Key Vault deleted in the last 7 days keeps its name reserved; the same name would be reused by this template.
+DELETED=$(az keyvault list-deleted --query "[?starts_with(name,'kv-stockmkt-')].name" -o tsv 2>/dev/null | tr -d '\r' || true)
+if [ -n "$DELETED" ]; then
+  echo "Found a soft-deleted Key Vault from a previous deploy: $DELETED"
+  read -r -p "Purge it so the name can be reused? (its old secrets are erased; they are re-loaded from key.txt) [y/N] " pg
+  if [[ "$pg" =~ ^[Yy]$ ]]; then
+    for v in $DELETED; do az keyvault purge --name "$v" --location "$LOCATION" -o none; done
+  else
+    echo "Not purged: the deploy will fail on the Key Vault name. Re-run after purging."; exit 1
+  fi
+fi
+
 echo "==> 1/5 Resource group + foundation (registry, Key Vault, identity, environment)"
 az group create -n "$RG" -l "$LOCATION" -o none
 OUT=$(az deployment group create -g "$RG" -f "$ROOT/deploy/main.bicep" \
