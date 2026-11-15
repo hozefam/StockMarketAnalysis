@@ -73,6 +73,11 @@ Only port 3000 is published; the backend is reachable from the frontend containe
 
 - **Rotating secrets:** update the value in Key Vault, then restart the backend revision
   (`az containerapp revision restart ...`); Container Apps reads Key Vault secrets when a revision starts.
+- **Idle environments are auto-deleted after 90 days.** Azure removes a Container Apps environment that has had "no
+  active container apps or jobs running" for over 90 days. The docs don't say whether an app scaled to zero counts as
+  active. If you leave this untouched for months and the site disappears, just run `deploy.sh` again (it recreates
+  everything). To rule the risk out, set `frontendMinReplicas = 1` in `deploy/main.bicep` (about $4 more per month),
+  which keeps one replica running.
 - **Caches are per replica.** The first analysis request on each backend replica takes ~20 seconds.
 - **Stricter lock-down (optional):** internal ingress already keeps the backend off the internet. To also stop other apps
   you might add to the environment from calling it, add a shared-header check, or use a VNet with NSG rules.
