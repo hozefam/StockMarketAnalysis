@@ -38,7 +38,7 @@ var kvName = toLower('kv-${namePrefix}-${take(token, 6)}')
 
 // Built-in role definition IDs
 var acrPullRole = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-var kvSecretsUserRole = '4633458b-17de-40ea-aebe-9f3d0ec3b8de'
+var kvSecretsUserRole = '4633458b-17de-408a-b874-0445c86b69e6'
 
 // ---------------- foundation ----------------
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
