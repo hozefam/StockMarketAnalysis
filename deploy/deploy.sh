@@ -18,6 +18,10 @@
 # Optional overrides:  LOCATION=centralindia TAG=v1 SHARED_RG=rg-stockmarket-shared bash deploy/deploy.sh dev
 set -euo pipefail
 
+# Git Bash on Windows rewrites arguments that start with "/" (like /subscriptions/...) into Windows paths, which makes
+# Azure answer "MissingSubscription". This switches that off; it does nothing on macOS, Linux or WSL.
+export MSYS_NO_PATHCONV=1
+
 ENVIRONMENT="${1:-}"
 case "$ENVIRONMENT" in dev|qa|uat|prod) ;; *) echo "Usage: bash deploy/deploy.sh <dev|qa|uat|prod>"; exit 1;; esac
 
@@ -69,8 +73,11 @@ if [[ "$ls" =~ ^[Yy]$ ]]; then
   [ -f "$KEYFILE" ] || { echo "backend/key.txt not found"; exit 1; }
   ME=$(az ad signed-in-user show --query id -o tsv)
   KVID=$(az keyvault show -n "$KV" --query id -o tsv)
-  az role assignment create --assignee-object-id "$ME" --assignee-principal-type User \
-     --role "Key Vault Secrets Officer" --scope "$KVID" -o none 2>/dev/null || true
+  # "already exists" is fine on a re-run; anything else must not be hidden
+  if ! MSG=$(az role assignment create --assignee-object-id "$ME" --assignee-principal-type User \
+       --role "Key Vault Secrets Officer" --scope "$KVID" -o none 2>&1); then
+    echo "$MSG" | grep -qi "already exists" || { echo "Could not grant Key Vault Secrets Officer: $MSG"; exit 1; }
+  fi
   echo "    waiting for the role assignment to propagate..."; sleep 45
   while IFS='=' read -r k v; do
     v="${v%$'\r'}"

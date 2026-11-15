@@ -41,7 +41,10 @@ Two kinds of deployer, on purpose:
 - Permission to create app registrations in your Entra tenant.
 - **Admin rights on the GitHub repo.** The repo is public, so environment approvals are available for free. If you ever
   make it private, required reviewers need a paid GitHub plan.
-- **Git Bash, WSL, macOS or Linux** for the shell snippets below (PowerShell quoting differs).
+- **Git Bash, WSL, macOS or Linux** for the shell snippets below (PowerShell quoting differs). In Git Bash the snippets
+  need `export MSYS_NO_PATHCONV=1` (already included; `deploy.sh` sets it itself).
+- Don't paste `<angle-bracket placeholders>` literally: bash reads `<...>` as a redirect and fails with
+  "syntax error near unexpected token `newline'".
 - `backend/key.txt` filled in (used once to load the secrets into Key Vault).
 
 ## 3. Step 1: bootstrap each environment in Azure (one-time, from your machine)
@@ -73,48 +76,76 @@ Tips:
 
 ## 4. Step 2: let GitHub log in to Azure (one identity per environment)
 
-Run once. It creates four Entra app registrations, each trusted **only** for the matching GitHub Environment, with the
-least rights that work.
+Two short blocks. Both are **safe to re-run** and contain **nothing you need to edit** (no `<placeholders>`).
+
+> **Git Bash on Windows:** the first line, `export MSYS_NO_PATHCONV=1`, is required. Without it Git Bash rewrites
+> `/subscriptions/...` into a Windows path and Azure answers `MissingSubscription`.
+
+**A. Create the identities and their GitHub trust** (one Entra app registration per environment, each trusted *only* for
+the matching GitHub Environment). List only the environments you want.
 
 ```bash
-SUB=$(az account show --query id -o tsv)
-TENANT=$(az account show --query tenantId -o tsv)
+export MSYS_NO_PATHCONV=1
 REPO=hozefam/StockMarketAnalysis
-ACR=<the registry name from step 1>
+ENVS="dev qa uat prod"
 
-for ENV in dev qa uat prod; do
-  APP_ID=$(az ad app create --display-name "sp-stockmarket-$ENV" --query appId -o tsv)
-  az ad sp create --id "$APP_ID" > /dev/null
-
-  # "only a workflow job running in the GitHub Environment named $ENV of this repo may log in as this identity"
-  az ad app federated-credential create --id "$APP_ID" --parameters "{
-    \"name\": \"github-$ENV\",
-    \"issuer\": \"https://token.actions.githubusercontent.com\",
-    \"subject\": \"repo:$REPO:environment:$ENV\",
-    \"audiences\": [\"api://AzureADTokenExchange\"]
-  }" > /dev/null
-
-  # Contributor on this environment's resource group only
-  az role assignment create --assignee "$APP_ID" --role Contributor \
-     --scope "/subscriptions/$SUB/resourceGroups/rg-stockmarket-$ENV" > /dev/null
-
+for ENV in $ENVS; do
+  APP_ID=$(az ad app list --display-name "sp-stockmarket-$ENV" --query "[0].appId" -o tsv)
+  if [ -z "$APP_ID" ]; then
+    APP_ID=$(az ad app create --display-name "sp-stockmarket-$ENV" --query appId -o tsv)
+    az ad sp create --id "$APP_ID" > /dev/null
+    # "only a workflow job running in the GitHub Environment named $ENV of this repo may log in as this identity"
+    az ad app federated-credential create --id "$APP_ID" --parameters "{
+      \"name\": \"github-$ENV\",
+      \"issuer\": \"https://token.actions.githubusercontent.com\",
+      \"subject\": \"repo:$REPO:environment:$ENV\",
+      \"audiences\": [\"api://AzureADTokenExchange\"]
+    }" > /dev/null
+  fi
   echo "$ENV  AZURE_CLIENT_ID=$APP_ID"
+done
+echo "AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)"
+echo "AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv)"
+```
+
+Keep the printed values for step 3 (none of them is a secret).
+
+**B. Give each identity its rights** (least privilege). Run this **after** an environment has been bootstrapped in step 1;
+environments that don't exist yet are skipped, so just run it again later.
+
+```bash
+export MSYS_NO_PATHCONV=1
+SUB=$(az account show --query id -o tsv)
+ENVS="dev qa uat prod"
+
+for ENV in $ENVS; do
+  APP_ID=$(az ad app list --display-name "sp-stockmarket-$ENV" --query "[0].appId" -o tsv)
+  if az group show -n "rg-stockmarket-$ENV" > /dev/null 2>&1; then
+    # Contributor on this environment's resource group only
+    az role assignment create --assignee "$APP_ID" --role Contributor \
+       --scope "/subscriptions/$SUB/resourceGroups/rg-stockmarket-$ENV" -o none \
+       && echo "$ENV: Contributor granted"
+  else
+    echo "$ENV: skipped (rg-stockmarket-$ENV does not exist yet; bootstrap it, then re-run this block)"
+  fi
 done
 
 # Only the dev identity pushes images (the build job runs in the dev environment):
-DEV_APP_ID=<the dev AZURE_CLIENT_ID printed above>
+ACR=$(az acr list -g rg-stockmarket-shared --query "[0].name" -o tsv)
+DEV_APP_ID=$(az ad app list --display-name "sp-stockmarket-dev" --query "[0].appId" -o tsv)
 az role assignment create --assignee "$DEV_APP_ID" --role AcrPush \
-   --scope "$(az acr show -n "$ACR" --query id -o tsv)"
-
-echo "AZURE_TENANT_ID=$TENANT"
-echo "AZURE_SUBSCRIPTION_ID=$SUB"
+   --scope "$(az acr show -n "$ACR" --query id -o tsv)" -o none && echo "dev: AcrPush granted on $ACR"
+echo "ACR_NAME=$ACR"
 ```
 
-Keep the four `AZURE_CLIENT_ID` values, the tenant ID and the subscription ID for the next step. None of them is a
-secret.
+Notes:
+- "The role assignment already exists" on a re-run is fine.
+- "Cannot find service principal" right after creating one means Azure hasn't caught up yet. Wait a minute and re-run.
+- Check what an identity holds: `az role assignment list --assignee <client id> --all -o table`.
 
 Why this is safe: the federated credential has no password to steal, and it only works for jobs that GitHub itself runs
-inside the named Environment, so approval rules and branch restrictions on `prod` also protect the Azure login.
+inside the named Environment, so approval rules and branch restrictions on `prod` also protect the Azure login. The
+pipeline identity is Contributor on one resource group; it cannot grant roles or read Key Vault secrets.
 
 ## 5. Step 3: configure GitHub (web UI)
 
@@ -254,6 +285,9 @@ dev/qa/uat vaults are soft-deleted for 7 days; `deploy.sh` offers to purge them 
 
 | Symptom | Likely cause and fix |
 |---|---|
+| `MissingSubscription` from `az role assignment create` (Git Bash) | Git Bash rewrote the `/subscriptions/...` scope into a Windows path. Run `export MSYS_NO_PATHCONV=1` first, then re-run the command. |
+| `syntax error near unexpected token 'newline'` | A `<placeholder>` was pasted literally. Replace it with a real value (the step 2 blocks no longer have any). |
+| `usage error: --assignee can't be an empty string` | A variable is empty, usually because the line that sets it failed earlier. Fix that line first. |
 | `AADSTS70021: No matching federated identity record found` | The Environment name or repo in the credential's `subject` doesn't match exactly. It must be `repo:hozefam/StockMarketAnalysis:environment:<env>`, lowercase environment name. |
 | `AuthorizationFailed` on the deploy step | The environment's identity lacks **Contributor** on `rg-stockmarket-<env>`. Role assignments can take a few minutes to take effect. |
 | `Resource group rg-stockmarket-<env> does not exist` | That environment was never bootstrapped. Run `bash deploy/deploy.sh <env>`. |
