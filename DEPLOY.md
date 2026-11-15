@@ -54,8 +54,19 @@ Only port 3000 is published; the backend is reachable from the frontend containe
 2. **Check Groww and Yahoo from Azure.** I tested the containers locally, not from Azure. Groww may restrict API calls by
    source IP, and Yahoo may rate-limit cloud IPs. Container Apps outbound IPs are shared unless you add a VNet + NAT
    gateway with a static IP. Check `https://<frontend>/api/groww/status` after deploying.
-3. **Cost.** Two frontend replicas minimum plus Log Analytics and ACR Basic costs a few dollars a month. Set
-   `frontendMinReplicas=1` (or 0 for scale-to-zero) in `deploy/main.bicep` to save.
+3. **Cost: about US$40 per month as configured** (Central India retail rates, light traffic). Almost all of it is the
+   three always-on replicas (2 frontend + 1 backend, 0.5 vCPU / 1 GiB each, billed at the idle rate even with no
+   traffic, about $35) plus Container Registry Basic (about $5). Key Vault, Log Analytics (first 5 GB/month free),
+   the managed identity, the load-balanced ingress and the first 100 GB of egress are effectively free here.
+   To cut it, edit `deploy/main.bicep`:
+   - `frontendMinReplicas = 1` → about $27/month
+   - `frontendMinReplicas = 0` and `backendMinReplicas = 0` (scale to zero) → about $5–8/month, at the price of a
+     cold start on the first request after idle
+   - 0.25 vCPU / 0.5 GiB per app instead of 0.5 / 1 → roughly half the compute cost
+
+   No premium compute or networking is used (Consumption plan, ACR Basic, Key Vault Standard, no VNet, NAT
+   gateway, private endpoint, Front Door or Application Gateway). Don't enable private endpoints or planned
+   maintenance on the environment without checking pricing: they add a separate management charge.
 
 ## Good to know
 
