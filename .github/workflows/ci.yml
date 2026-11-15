@@ -1,0 +1,36 @@
+name: ci
+
+# Runs on every pull request. No Azure credentials needed: it only proves that the templates compile and the images build.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bicep:
+    name: bicep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile templates and parameter files
+        run: |
+          set -euo pipefail
+          az bicep build --file deploy/shared.bicep --stdout > /dev/null
+          az bicep build --file deploy/main.bicep --stdout > /dev/null
+          for env in dev qa uat prod; do
+            az bicep build-params --file "deploy/params/${env}.bicepparam" --stdout > /dev/null
+          done
+          echo "All Bicep files compile."
+
+  docker:
+    name: docker (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the ${{ matrix.image }} image
+        run: docker build -t "stockmarket-${{ matrix.image }}:ci" "${{ matrix.image }}"
