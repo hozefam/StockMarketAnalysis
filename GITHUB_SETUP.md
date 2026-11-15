@@ -82,33 +82,48 @@ Two short blocks. Both are **safe to re-run** and contain **nothing you need to 
 > `/subscriptions/...` into a Windows path and Azure answers `MissingSubscription`.
 
 **A. Create the identities and their GitHub trust** (one Entra app registration per environment, each trusted *only* for
-the matching GitHub Environment). List only the environments you want.
+the matching GitHub Environment). List only the environments you want. If an identity already exists, this **updates its
+trust in place**.
 
 ```bash
 export MSYS_NO_PATHCONV=1
 REPO=hozefam/StockMarketAnalysis
 ENVS="dev qa uat prod"
 
+# GitHub puts numeric IDs into the login subject, e.g. repo:owner@123/name@456:environment:dev
+# (it protects against someone re-using a deleted repo's name). Ask GitHub's public API for the exact form:
+IDS=$(curl -s "https://api.github.com/repos/$REPO" | python -c "import sys,json; d=json.load(sys.stdin); print('%s@%s/%s@%s' % (d['owner']['login'], d['owner']['id'], d['name'], d['id']))")
+echo "repo identity used in the subjects: $IDS"
+
 for ENV in $ENVS; do
   APP_ID=$(az ad app list --display-name "sp-stockmarket-$ENV" --query "[0].appId" -o tsv)
   if [ -z "$APP_ID" ]; then
     APP_ID=$(az ad app create --display-name "sp-stockmarket-$ENV" --query appId -o tsv)
     az ad sp create --id "$APP_ID" > /dev/null
-    # "only a workflow job running in the GitHub Environment named $ENV of this repo may log in as this identity"
-    az ad app federated-credential create --id "$APP_ID" --parameters "{
-      \"name\": \"github-$ENV\",
-      \"issuer\": \"https://token.actions.githubusercontent.com\",
-      \"subject\": \"repo:$REPO:environment:$ENV\",
-      \"audiences\": [\"api://AzureADTokenExchange\"]
-    }" > /dev/null
   fi
-  echo "$ENV  AZURE_CLIENT_ID=$APP_ID"
+  # "only a workflow job running in the GitHub Environment named $ENV of this repo may log in as this identity"
+  CRED="{
+    \"name\": \"github-$ENV\",
+    \"issuer\": \"https://token.actions.githubusercontent.com\",
+    \"subject\": \"repo:$IDS:environment:$ENV\",
+    \"audiences\": [\"api://AzureADTokenExchange\"]
+  }"
+  if az ad app federated-credential show --id "$APP_ID" --federated-credential-id "github-$ENV" > /dev/null 2>&1; then
+    az ad app federated-credential update --id "$APP_ID" --federated-credential-id "github-$ENV" --parameters "$CRED" > /dev/null
+  else
+    az ad app federated-credential create --id "$APP_ID" --parameters "$CRED" > /dev/null
+  fi
+  echo "$ENV  AZURE_CLIENT_ID=$APP_ID   trusts: repo:$IDS:environment:$ENV"
 done
 echo "AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)"
 echo "AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv)"
 ```
 
 Keep the printed values for step 3 (none of them is a secret).
+
+> **If a login still fails with `AADSTS700213` / `AADSTS70021`,** open the failed step's log: it prints the exact
+> `subject claim` GitHub sent. The credential's subject must match that text character for character. Set it with
+> `az ad app federated-credential update` using the string from the log.
 
 **B. Give each identity its rights** (least privilege). Run this **after** an environment has been bootstrapped in step 1;
 environments that don't exist yet are skipped, so just run it again later.
@@ -288,7 +303,7 @@ dev/qa/uat vaults are soft-deleted for 7 days; `deploy.sh` offers to purge them 
 | `MissingSubscription` from `az role assignment create` (Git Bash) | Git Bash rewrote the `/subscriptions/...` scope into a Windows path. Run `export MSYS_NO_PATHCONV=1` first, then re-run the command. |
 | `syntax error near unexpected token 'newline'` | A `<placeholder>` was pasted literally. Replace it with a real value (the step 2 blocks no longer have any). |
 | `usage error: --assignee can't be an empty string` | A variable is empty, usually because the line that sets it failed earlier. Fix that line first. |
-| `AADSTS70021: No matching federated identity record found` | The Environment name or repo in the credential's `subject` doesn't match exactly. It must be `repo:hozefam/StockMarketAnalysis:environment:<env>`, lowercase environment name. |
+| `AADSTS700213` / `AADSTS70021: No matching federated identity record found` | The credential's `subject` doesn't match what GitHub sent. The failed log shows the exact `subject claim`; it includes numeric IDs for this repo (`repo:hozefam@<owner id>/StockMarketAnalysis@<repo id>:environment:dev`). Re-run block A in step 2, which sets it correctly, or paste the logged subject into `az ad app federated-credential update`. Also check the environment name is lowercase and exact. |
 | `AuthorizationFailed` on the deploy step | The environment's identity lacks **Contributor** on `rg-stockmarket-<env>`. Role assignments can take a few minutes to take effect. |
 | `Resource group rg-stockmarket-<env> does not exist` | That environment was never bootstrapped. Run `bash deploy/deploy.sh <env>`. |
 | `AuthorizationFailed … roleAssignments/write` | Something is deploying with `MANAGE_RBAC=true` without Owner rights. The pipeline must keep it `false`. |
