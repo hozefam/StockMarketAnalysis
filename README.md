@@ -42,7 +42,9 @@ Open http://localhost:3000 (home) and http://localhost:3000/analysis (scanner).
 ## Containers and Azure
 
 `docker compose up --build` runs both services locally. See [DEPLOY.md](DEPLOY.md) for deploying to Azure Container Apps
-(Container Registry, Key Vault, internal-only backend behind a load-balanced frontend gateway).
+(Container Registry, Key Vault, internal-only backend behind a load-balanced frontend gateway) across
+dev / qa / uat / prod, and [GITHUB_SETUP.md](GITHUB_SETUP.md) for the one-time GitHub and Azure setup of the
+promotion pipeline (`.github/workflows`).
 
 ## Notes
 - Price history comes from Yahoo Finance; the Groww key used here has no market-data access.

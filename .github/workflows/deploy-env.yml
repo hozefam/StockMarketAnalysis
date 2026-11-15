@@ -1,0 +1,83 @@
+name: deploy-env
+
+# Reusable: deploy an already-built image tag to ONE environment, then smoke-test it.
+# Called by pipeline.yml. The job runs inside the GitHub Environment of the same name, so that environment's
+# protection rules (required reviewers, branch restrictions) and variables apply.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: dev, qa, uat or prod
+        required: true
+        type: string
+      image_tag:
+        description: Image tag (the git commit SHA) to deploy
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      # Passwordless login (OIDC federated credential): nothing secret is stored in GitHub.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy ${{ inputs.environment }} (${{ inputs.image_tag }})
+        id: deploy
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          DEPLOY_APPS: "true"
+          MANAGE_RBAC: "false" # the pipeline only updates apps; role assignments are done once by deploy/deploy.sh
+          SHARED_RG: ${{ vars.SHARED_RG || 'rg-stockmarket-shared' }}
+        run: |
+          set -euo pipefail
+          RG="rg-stockmarket-${ENVIRONMENT}"
+          if ! az group show -n "$RG" > /dev/null 2>&1; then
+            echo "::error::Resource group $RG does not exist. Run 'bash deploy/deploy.sh ${ENVIRONMENT}' once first (see GITHUB_SETUP.md)."
+            exit 1
+          fi
+          OUT=$(az deployment group create -g "$RG" -p "deploy/params/${ENVIRONMENT}.bicepparam" \
+                --query properties.outputs -o json)
+          echo "url=$(echo "$OUT" | jq -r '.frontendUrl.value')" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "Testing $URL (apps may be scaling up from zero, so this retries)"
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors --max-time 90 \
+               --output /dev/null "$URL/"
+          # goes through the frontend gateway to the backend; proves the whole chain is wired up
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors --max-time 90 \
+               "$URL/api/groww/status" | tee status.json
+          echo
+          jq -e 'has("connected")' status.json > /dev/null
+
+      - name: Summary
+        if: always()
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          {
+            echo "### ${{ inputs.environment }}"
+            echo "- image tag: \`${{ inputs.image_tag }}\`"
+            echo "- url: ${URL:-n/a}"
+            echo "- result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

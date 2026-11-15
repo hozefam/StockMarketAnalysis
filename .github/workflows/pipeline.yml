@@ -1,0 +1,96 @@
+name: pipeline
+
+# Build once, promote the same image: dev -> qa -> uat -> prod.
+#   push to main : build and push images (tagged with the commit SHA), deploy dev, then qa automatically.
+#                  uat and prod wait for approval (configured on the GitHub Environments, see GITHUB_SETUP.md).
+#   manual run   : deploy any existing image tag to any environment (promote out of order, or roll back).
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy to
+        type: choice
+        required: true
+        options: [dev, qa, uat, prod]
+      image_tag:
+        description: Image tag to deploy (a git commit SHA that was built by this pipeline)
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev # uses the dev identity, which is allowed to push to the shared registry
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Log in to the registry
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+      - name: Build and push both images
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for image in backend frontend; do
+            ref="${ACR_NAME}.azurecr.io/stockmarket-${image}:${TAG}"
+            docker build -t "$ref" "$image"
+            docker push "$ref"
+          done
+
+  dev:
+    if: github.event_name == 'push'
+    needs: build
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: dev
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  qa:
+    if: github.event_name == 'push'
+    needs: [build, dev]
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: qa
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  uat:
+    if: github.event_name == 'push'
+    needs: [build, qa]
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: uat
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  prod:
+    if: github.event_name == 'push'
+    needs: [build, uat]
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: prod
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: ${{ inputs.environment }}
+      image_tag: ${{ inputs.image_tag }}
