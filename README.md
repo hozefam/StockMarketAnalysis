@@ -15,6 +15,13 @@ Copy the example and fill in your Groww TOTP token and secret. `key.txt` is git-
 cp backend/key.txt.example backend/key.txt
 ```
 
+### Quick start (Windows)
+```bat
+start.bat     :: installs dependencies on first run, starts backend + frontend, opens the browser
+stop.bat      :: stops both
+```
+The manual steps below do the same thing one piece at a time.
+
 ### 2. Backend (port 8000)
 ```bash
 cd backend
