@@ -39,6 +39,11 @@ npm run dev
 
 Open http://localhost:3000 (home) and http://localhost:3000/analysis (scanner).
 
+## Containers and Azure
+
+`docker compose up --build` runs both services locally. See [DEPLOY.md](DEPLOY.md) for deploying to Azure Container Apps
+(Container Registry, Key Vault, internal-only backend behind a load-balanced frontend gateway).
+
 ## Notes
 - Price history comes from Yahoo Finance; the Groww key used here has no market-data access.
 - Momentum timeframe for RSI and stochastic is set by `MOMENTUM_TF` in `backend/dow.py` (`"1d"` or `"1wk"`).

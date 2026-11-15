@@ -1,0 +1,18 @@
+# Local run that mirrors Azure: only the frontend is published; the backend is reachable
+# only from the frontend over the compose network.
+#   docker compose up --build        then open http://localhost:3000
+services:
+  backend:
+    build: ./backend
+    env_file: ./backend/key.txt        # GROWW_TOTP_TOKEN / GROWW_TOTP_SECRET (local only, git-ignored)
+    expose:
+      - "8000"                         # no "ports:" => not reachable from the host
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

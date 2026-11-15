@@ -25,7 +25,7 @@ export default function Indicators({ symbol }) {
 
   useEffect(() => {
     let charts = [], dead = false;
-    fetch(`http://localhost:8000/api/analysis/indicators?symbol=${encodeURIComponent(symbol)}`)
+    fetch(`/api/analysis/indicators?symbol=${encodeURIComponent(symbol)}`)
       .then((r) => r.json())
       .then((d) => {
         if (dead) return;

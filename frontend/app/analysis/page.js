@@ -183,7 +183,7 @@ export default function Analysis() {
   const [how, setHow] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/analysis/dow")
+    fetch("/api/analysis/dow")
       .then((r) => r.json())
       .then((d) => {
         setData(d);

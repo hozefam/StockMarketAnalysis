@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import httpx
@@ -7,17 +8,24 @@ from fastapi.middleware.cors import CORSMiddleware
 
 GROWW_BASE = "https://api.groww.in/v1"
 KEY_FILE = Path(__file__).parent / "key.txt"
+SECRET_NAMES = ("GROWW_TOTP_TOKEN", "GROWW_TOTP_SECRET")
 
 app = FastAPI(title="StockMarket Backend")
+# In Azure the browser never calls this service directly (the frontend proxies to it), so CORS only matters locally.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
+    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
 
 
 def load_keys() -> dict:
+    """Secrets come from environment variables (Azure Key Vault -> Container Apps secrets),
+    falling back to backend/key.txt for local development."""
+    env = {k: os.environ[k] for k in SECRET_NAMES if os.environ.get(k)}
+    if len(env) == len(SECRET_NAMES):
+        return env
     keys = {}
     for line in KEY_FILE.read_text().splitlines():
         if "=" in line:

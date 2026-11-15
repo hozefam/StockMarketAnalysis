@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 
-const API = "http://localhost:8000";
+const API = "";
 const inr = (n) =>
   typeof n === "number" ? n.toLocaleString("en-IN", { style: "currency", currency: "INR" }) : "–";
 

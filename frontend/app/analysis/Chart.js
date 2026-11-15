@@ -14,7 +14,7 @@ export default function Chart({ symbol, retracements }) {
   useEffect(() => {
     let chart, dead = false;
     setState("loading");
-    fetch(`http://localhost:8000/api/analysis/candles?symbol=${encodeURIComponent(symbol)}&interval=${tf}`)
+    fetch(`/api/analysis/candles?symbol=${encodeURIComponent(symbol)}&interval=${tf}`)
       .then((r) => r.json())
       .then((d) => {
         if (dead) return;
