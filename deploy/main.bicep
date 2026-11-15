@@ -66,10 +66,9 @@ var kvName = toLower('kv-${namePrefix}-${environmentName}-${take(token, 6)}')
 var kvSecretsUserRole = '4633458b-17de-408a-b874-0445c86b69e6'
 
 // ---------------- shared registry (lives in another resource group) ----------------
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrName
-  scope: resourceGroup(acrResourceGroup)
-}
+// Only the registry's address is needed here, and it is computed from its name, so the deployer needs NO access to the
+// shared resource group. (An earlier version read the registry resource and the pipeline identity was denied.)
+var acrLoginServer = '${acrName}.azurecr.io'
 
 // ---------------- per-environment foundation ----------------
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -153,7 +152,7 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
 // ---------------- apps ----------------
 var registryConfig = [
   {
-    server: acr.properties.loginServer
+    server: acrLoginServer
     identity: identity.id
   }
 ]
@@ -196,7 +195,7 @@ resource backend 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
       containers: [
         {
           name: 'backend'
-          image: '${acr.properties.loginServer}/stockmarket-backend:${imageTag}'
+          image: '${acrLoginServer}/stockmarket-backend:${imageTag}'
           resources: { cpu: json(containerCpu), memory: containerMemory }
           env: [
             { name: 'GROWW_TOTP_TOKEN', secretRef: 'groww-totp-token' }
@@ -245,7 +244,7 @@ resource frontend 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
       containers: [
         {
           name: 'frontend'
-          image: '${acr.properties.loginServer}/stockmarket-frontend:${imageTag}'
+          image: '${acrLoginServer}/stockmarket-frontend:${imageTag}'
           resources: { cpu: json(containerCpu), memory: containerMemory }
           env: [
             // the gateway route in the frontend forwards /api/* here
@@ -272,6 +271,6 @@ resource frontend 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
 
 output environmentName string = environmentName
 output acrName string = acrName
-output acrLoginServer string = acr.properties.loginServer
+output acrLoginServer string = acrLoginServer
 output keyVaultName string = kv.name
 output frontendUrl string = deployApps ? 'https://${frontend!.properties.configuration.ingress.fqdn}' : ''
