@@ -54,15 +54,15 @@ Only port 3000 is published; the backend is reachable from the frontend containe
 2. **Check Groww and Yahoo from Azure.** I tested the containers locally, not from Azure. Groww may restrict API calls by
    source IP, and Yahoo may rate-limit cloud IPs. Container Apps outbound IPs are shared unless you add a VNet + NAT
    gateway with a static IP. Check `https://<frontend>/api/groww/status` after deploying.
-3. **Cost: about US$40 per month as configured** (Central India retail rates, light traffic). Almost all of it is the
-   three always-on replicas (2 frontend + 1 backend, 0.5 vCPU / 1 GiB each, billed at the idle rate even with no
-   traffic, about $35) plus Container Registry Basic (about $5). Key Vault, Log Analytics (first 5 GB/month free),
-   the managed identity, the load-balanced ingress and the first 100 GB of egress are effectively free here.
-   To cut it, edit `deploy/main.bicep`:
-   - `frontendMinReplicas = 1` → about $27/month
-   - `frontendMinReplicas = 0` and `backendMinReplicas = 0` (scale to zero) → about $5–8/month, at the price of a
-     cold start on the first request after idle
-   - 0.25 vCPU / 0.5 GiB per app instead of 0.5 / 1 → roughly half the compute cost
+3. **Cost: about US$10 per month with the default settings** (Central India retail rates, light traffic):
+   the frontend runs 1 replica (0.25 vCPU / 0.5 GiB, about $4 at the idle rate), the backend scales to zero when idle
+   (the first request after a quiet period has a short cold start), and Container Registry Basic is about $5.
+   Key Vault, Log Analytics (first 5 GB/month free), the managed identity, the load-balanced ingress and the first
+   100 GB of egress are effectively free here. The backend peaks around 75 MiB, so the small size is safe.
+   To change it, edit the defaults at the top of `deploy/main.bicep` (or pass `-p name=value`):
+   - `frontendMinReplicas = 0` → about $5–6/month (the page itself then has a cold start too)
+   - `frontendMinReplicas = 2` and `backendMinReplicas = 1` (always warm, more redundancy) → about $20/month at this size
+   - `containerCpu = '0.5'`, `containerMemory = '1Gi'` → doubles the compute part
 
    No premium compute or networking is used (Consumption plan, ACR Basic, Key Vault Standard, no VNet, NAT
    gateway, private endpoint, Front Door or Application Gateway). Don't enable private endpoints or planned
@@ -79,3 +79,33 @@ Only port 3000 is published; the backend is reachable from the frontend containe
 - **Registry fallback:** if ACR Tasks is blocked on your subscription type, build locally and push:
   `az acr login -n <acr>` → `docker build` → `docker tag` → `docker push`.
 - **Key Vault network:** it allows public network access with RBAC. For stricter setups use a private endpoint.
+
+## Tear down (stop all charges)
+
+Everything lives in one resource group, so deleting it removes the apps, environment, registry (and its images),
+Key Vault, identity and log workspace.
+
+```bash
+az resource list -g rg-stockmarket -o table          # look first: this is what will be deleted
+az group delete -n rg-stockmarket --yes --no-wait    # starts the deletion (takes a few minutes)
+az group exists -n rg-stockmarket                    # prints false once it's gone
+```
+
+Or in the portal: *Resource groups → rg-stockmarket → Delete resource group*, then type the name to confirm.
+
+Two things Azure keeps for a while after a group is deleted:
+
+1. **Key Vault is soft-deleted for 7 days**, along with your Groww secrets. Purge it to remove them immediately (and to be
+   able to redeploy with the same name, which is derived from the resource group):
+   `az keyvault purge --name <key-vault-name> --location centralindia`
+   (list soft-deleted vaults with `az keyvault list-deleted`).
+2. **The Log Analytics workspace is soft-deleted for 14 days** and blocks reusing its name. Delete it permanently first if
+   you plan to redeploy soon:
+   `az monitor log-analytics workspace delete -g rg-stockmarket -n <workspace-name> --force true --yes`
+
+To keep the app but cut the bill instead, shrink the live apps without redeploying:
+
+```bash
+az containerapp update -g rg-stockmarket -n ca-frontend --min-replicas 1 --cpu 0.25 --memory 0.5Gi
+az containerapp update -g rg-stockmarket -n ca-backend  --min-replicas 0 --cpu 0.25 --memory 0.5Gi
+```

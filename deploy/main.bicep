@@ -25,12 +25,16 @@ param deployApps bool = false
 param imageTag string = 'latest'
 
 @description('Frontend replica range (the Container Apps ingress load-balances across replicas)')
-param frontendMinReplicas int = 2
+param frontendMinReplicas int = 1
 param frontendMaxReplicas int = 5
 
-@description('Backend replica range')
-param backendMinReplicas int = 1
+@description('Backend replica range (0 = scale to zero when idle; the first request after idle has a short cold start)')
+param backendMinReplicas int = 0
 param backendMaxReplicas int = 3
+
+@description('CPU and memory per replica (the analysis peaks around 75 MiB, so 0.25 vCPU / 0.5 GiB is plenty)')
+param containerCpu string = '0.25'
+param containerMemory string = '0.5Gi'
 
 var token = uniqueString(resourceGroup().id)
 var acrName = toLower('acr${namePrefix}${take(token, 8)}')
@@ -158,7 +162,7 @@ resource backend 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
         {
           name: 'backend'
           image: '${acr.properties.loginServer}/stockmarket-backend:${imageTag}'
-          resources: { cpu: json('0.5'), memory: '1Gi' }
+          resources: { cpu: json(containerCpu), memory: containerMemory }
           env: [
             { name: 'GROWW_TOTP_TOKEN', secretRef: 'groww-totp-token' }
             { name: 'GROWW_TOTP_SECRET', secretRef: 'groww-totp-secret' }
@@ -206,7 +210,7 @@ resource frontend 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
         {
           name: 'frontend'
           image: '${acr.properties.loginServer}/stockmarket-frontend:${imageTag}'
-          resources: { cpu: json('0.5'), memory: '1Gi' }
+          resources: { cpu: json(containerCpu), memory: containerMemory }
           env: [
             // the gateway route in the frontend forwards /api/* here
             { name: 'BACKEND_URL', value: 'http://${backend!.properties.configuration.ingress.fqdn}' }
